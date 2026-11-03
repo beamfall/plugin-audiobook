@@ -26,6 +26,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           path: beamfall-plugin-audiobook
+          persist-credentials: false
       - name: Checkout SDK override
         if: ${{ inputs.sdk_ref != '' }}
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -33,6 +34,7 @@ jobs:
           repository: beamfall/plugin-sdk
           ref: ${{ inputs.sdk_ref }}
           path: beamfall-plugin-sdk
+          persist-credentials: false
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: beamfall-plugin-audiobook/go.mod
@@ -61,6 +63,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           path: beamfall-plugin-audiobook
+          persist-credentials: false
       - name: Checkout SDK override
         if: ${{ inputs.sdk_ref != '' }}
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -68,6 +71,7 @@ jobs:
           repository: beamfall/plugin-sdk
           ref: ${{ inputs.sdk_ref }}
           path: beamfall-plugin-sdk
+          persist-credentials: false
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: beamfall-plugin-audiobook/go.mod
@@ -102,6 +106,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           path: beamfall-plugin-audiobook
+          persist-credentials: false
       - name: Checkout SDK override
         if: ${{ inputs.sdk_ref != '' }}
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -109,6 +114,7 @@ jobs:
           repository: beamfall/plugin-sdk
           ref: ${{ inputs.sdk_ref }}
           path: beamfall-plugin-sdk
+          persist-credentials: false
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: beamfall-plugin-audiobook/go.mod
