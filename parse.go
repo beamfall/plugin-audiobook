@@ -217,8 +217,9 @@ func (p *Parser) ContextRefusalReason(path string, probe sdk.ParseProbe, context
 
 func multiFileRefusal(path string, probe sdk.ParseProbe, parsed sdk.ParsedMedia) string {
 	album := strings.TrimSpace(probe.Tags["album"])
-	track, _ := trackNumber(probe.Tags["track"])
-	if album != "" || track != "" {
+	rawTrack := strings.TrimSpace(probe.Tags["track"])
+	track, _ := trackNumber(rawTrack)
+	if album != "" || rawTrack != "" {
 		ordinal, err := strconv.Atoi(track)
 		switch {
 		case album == "":
@@ -231,10 +232,12 @@ func multiFileRefusal(path string, probe sdk.ParseProbe, parsed sdk.ParsedMedia)
 	if parsed.PartGroup == "" || parsed.Index <= 0 {
 		return RefusalUntaggedNoPartNumber
 	}
-	// The folder is the book only when Parse titled the file from it; the
-	// flat author-folder layout titles each file from its own name instead.
+	// The folder is the book only when Parse titled the file from it and an
+	// author tag does not name the folder: in the flat author-folder layout
+	// the folder is the author, even when a bare-number name leaves Parse no
+	// other title.
 	folder := cleanName(filepath.Base(filepath.Dir(path)))
-	if folder == "" || parsed.Title != folder {
+	if folder == "" || parsed.Title != folder || folderIsAuthor(folder, probe.Tags) {
 		return RefusalFolderNotBookTitle
 	}
 	return ""

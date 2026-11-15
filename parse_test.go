@@ -160,6 +160,22 @@ func TestAmbiguousMultiFileFolderStillRefusedWithReason(t *testing.T) {
 			reason: RefusalFolderNotBookTitle,
 		},
 		{
+			name:   "author folder with bare-number files",
+			dir:    "/lib/audiobooks/Invented Author",
+			files:  []string{"01.mp3", "02.mp3"},
+			tags:   map[string]map[string]string{"01.mp3": {"artist": "Invented Author"}, "02.mp3": {"artist": "Invented Author"}},
+			file:   "01.mp3",
+			reason: RefusalFolderNotBookTitle,
+		},
+		{
+			name:   "malformed ordinal tag without book",
+			dir:    "/lib/audiobooks/Tagged Book",
+			files:  []string{"01.mp3", "02.mp3"},
+			tags:   map[string]map[string]string{"02.mp3": {"track": "/12"}},
+			file:   "02.mp3",
+			reason: RefusalTaggedWithoutBook,
+		},
+		{
 			name:   "book tag without ordinal",
 			dir:    "/lib/audiobooks/Tagged Book",
 			files:  []string{"01.mp3", "02.mp3"},
