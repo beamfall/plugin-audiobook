@@ -168,20 +168,76 @@ func (p *Parser) Parse(path string, probe sdk.ParseProbe) (sdk.ParsedMedia, bool
 	return parsed, true
 }
 
-// ParseWithContext refuses to fold a multi-file directory unless embedded
-// book and ordering tags independently prove the grouping. Single-file and
-// absent/future context preserve Parse's established path fallback.
+// ParseWithContext decides whether a file in a multi-file directory may fold
+// into that directory's ordered Parts. Single-file and absent/future context
+// preserve Parse's established path fallback. In a multi-file directory a file
+// is accepted when either:
+//   - its embedded tags prove the grouping: a book ("album") tag and a positive
+//     part ordinal ("track") tag (CORE-1710 behaviour, unchanged); or
+//   - it carries neither tag and its filename starts with a positive part
+//     number ("01.mp3", "Part 2.mp3", "Chapter 10 - Name.mp3"), so the folder
+//     names the book and the number orders the part (CORE-1834).
+//
+// Core orders a Parts group by the numeric Index, so "Part 2" sorts before
+// "Part 10" without any lexical comparison. Every other file is refused;
+// ContextRefusalReason says why. Core refuses a whole folder when any of its
+// audio files is refused, so a folder that mixes numbered parts with unrelated
+// files stays out of the library.
 func (p *Parser) ParseWithContext(path string, probe sdk.ParseProbe, context sdk.ParseContext) (sdk.ParsedMedia, bool) {
 	parsed, ok := p.Parse(path, probe)
 	if context.DirectoryMediaFileCount != sdk.DirectoryMediaFileCountMultiple || !ok {
 		return parsed, ok
 	}
-	track, _ := trackNumber(probe.Tags["track"])
-	ordinal, err := strconv.Atoi(track)
-	if strings.TrimSpace(probe.Tags["album"]) == "" || err != nil || ordinal <= 0 {
+	if multiFileRefusal(path, probe, parsed) != "" {
 		return sdk.ParsedMedia{}, false
 	}
 	return parsed, true
+}
+
+// Refusal reasons for a file in a multi-file directory. They name the evidence
+// that is missing, so a refused folder can be fixed by tagging or renaming.
+const (
+	RefusalTaggedWithoutBook    = "file has a part ordinal tag but no book (album) tag"
+	RefusalTaggedWithoutOrdinal = "file has a book (album) tag but no positive part ordinal (track) tag"
+	RefusalUntaggedNoPartNumber = "untagged file does not start with a positive part number"
+	RefusalFolderNotBookTitle   = "untagged file's folder does not name the book"
+)
+
+// ContextRefusalReason returns why ParseWithContext refuses path, or "" when
+// it accepts it or when Parse itself finds no title. Core can discover it
+// through a consumer-owned interface, as it does PartMarkerTitle, to show the
+// reason beside a refused folder.
+func (p *Parser) ContextRefusalReason(path string, probe sdk.ParseProbe, context sdk.ParseContext) string {
+	parsed, ok := p.Parse(path, probe)
+	if context.DirectoryMediaFileCount != sdk.DirectoryMediaFileCountMultiple || !ok {
+		return ""
+	}
+	return multiFileRefusal(path, probe, parsed)
+}
+
+func multiFileRefusal(path string, probe sdk.ParseProbe, parsed sdk.ParsedMedia) string {
+	album := strings.TrimSpace(probe.Tags["album"])
+	track, _ := trackNumber(probe.Tags["track"])
+	if album != "" || track != "" {
+		ordinal, err := strconv.Atoi(track)
+		switch {
+		case album == "":
+			return RefusalTaggedWithoutBook
+		case err != nil || ordinal <= 0:
+			return RefusalTaggedWithoutOrdinal
+		}
+		return ""
+	}
+	if parsed.PartGroup == "" || parsed.Index <= 0 {
+		return RefusalUntaggedNoPartNumber
+	}
+	// The folder is the book only when Parse titled the file from it; the
+	// flat author-folder layout titles each file from its own name instead.
+	folder := cleanName(filepath.Base(filepath.Dir(path)))
+	if folder == "" || parsed.Title != folder {
+		return RefusalFolderNotBookTitle
+	}
+	return ""
 }
 
 // PartMarkerTitle returns the chapter-navigation label for one file in a
