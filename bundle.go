@@ -29,7 +29,7 @@ func Bundle() sdk.Bundle {
 		ID:          "audiobook",
 		Version:     "0.1.4",
 		SDKFloor:    "0.4.0",
-		SDKCeiling:  "0.4.0",
+		SDKCeiling:  "0.4.1",
 		DisplayName: sdk.LocaleString{"en": "Audiobooks", "fr": "Livres audio"},
 		// An audiobook is one Media — display label only, never a schema
 		// identifier.
