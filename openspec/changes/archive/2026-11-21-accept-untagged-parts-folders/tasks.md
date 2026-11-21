@@ -2,5 +2,5 @@
 - [x] Expose `ContextRefusalReason` and the refusal reason constants
 - [x] Tests: untagged numbered folder is one book in order, natural numeric order, ambiguous folders refused with reason, tagged behaviour unchanged
 - [x] Update the context conformance vectors
-- [ ] Tag a release; core repins it and enables its scan test (CORE-1834)
-- [ ] `script/gate.sh`, then `openspec archive accept-untagged-parts-folders`
+- [x] Tag a release; core repins it and enables its scan test (CORE-1834)
+- [x] `script/gate.sh`, then `openspec archive accept-untagged-parts-folders`
