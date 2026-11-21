@@ -128,11 +128,14 @@ func (p *Parser) Parse(path string, probe sdk.ParseProbe) (sdk.ParsedMedia, bool
 
 	// 1. Title — tags-primary. The "album" tag is the book; "title" on a
 	// per-chapter file is the chapter, so album wins for the book title.
-	// Disc subfolders are the exception: the book folder titles them, because
-	// rips often tag each disc's album differently ("Novel (Disc 1)"), and a
-	// rescan parses an unchanged single-file disc without its tags, so only a
-	// path-derived title keeps every disc on one grouping key.
-	if disc == 0 {
+	// Disc subfolders are the exception: the book folder titles them whatever
+	// the tags say, because rips often tag each disc's album differently
+	// ("Novel (Disc 1)"), and a rescan parses an unchanged single-file disc
+	// without its tags, so only a path-derived title keeps every disc on one
+	// grouping key. bookDir guarantees that folder name is not empty.
+	if disc > 0 {
+		parsed.Title = cleanName(leafFolder)
+	} else {
 		parsed.Title = strings.TrimSpace(tags["album"])
 	}
 	if parsed.Title == "" {

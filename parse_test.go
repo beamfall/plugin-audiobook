@@ -406,3 +406,12 @@ func TestSingleFileDiscStableAcrossRescan(t *testing.T) {
 		t.Fatalf("bare = %+v, want Index %d, book folder title and group", bare, 2*discStride)
 	}
 }
+
+func TestDiscTitleIgnoresAuthorTags(t *testing.T) {
+	single := sdk.ParseContext{DirectoryMediaFileCount: sdk.DirectoryMediaFileCountSingle}
+	path := "/lib/Invented Author/Disc 2/03 - Finale.mp3"
+	parsed, ok := New().ParseWithContext(path, sdk.ParseProbe{Tags: map[string]string{"album_artist": "Invented Author"}}, single)
+	if !ok || parsed.Title != "Invented Author" || parsed.PartGroup != "/lib/Invented Author" {
+		t.Fatalf("parsed = %+v, want the book folder title the untagged rescan also derives", parsed)
+	}
+}
