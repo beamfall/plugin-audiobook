@@ -85,8 +85,20 @@ var (
 	// limitations" note before tightening this.
 	reSeriesFolder = regexp.MustCompile(`^(.*?)[ -]+(?:(?i:book)[ -]*|#)?(\d{1,3}(?:\.\d{1,3})?)$`)
 
+	// A disc subfolder of a multi-disc rip: "Disc 1", "disc01", "Disk 3",
+	// "CD2", "CD 02". Captures the disc number. Only these keywords qualify:
+	// "Part 1" or "Volume 2" folders are not discs.
+	reDiscFolder = regexp.MustCompile(`(?i)^(?:disc|disk|cd)[ ._-]?(\d{1,3})$`)
+
 	cleanNameReplacer = strings.NewReplacer(".", " ", "_", " ")
 )
+
+// discStride separates disc-qualified part ordinals: a part in disc d with
+// track t has Index d*discStride + t. It exceeds every filename ordinal
+// (reLeadingOrdinal reads at most four digits), so disc order always wins
+// over track order; a track tag at or above it is not a valid ordinal in a
+// disc folder.
+const discStride = 10000
 
 // Parse derives a best-guess ParsedMedia for one audiobook file. Tags win when
 // present (tags-primary); the folder/filename convention is the
@@ -99,14 +111,16 @@ var (
 //   - Sequence — the book's position in its Series (folder "Series ## /");
 //     empty when the book is not part of a recognised series.
 //   - Index    — this file's part ordinal within the book (track tag, else a
-//     leading filename number), 0 when single-file or unknown.
-//   - PartGroup — the leaf folder key for ordered Parts when Index is known.
+//     leading filename number), 0 when single-file or unknown. In a disc
+//     subfolder ("Title/Disc 2/") it is disc*discStride + that ordinal.
+//   - PartGroup — the leaf folder key for ordered Parts when Index is known;
+//     for a disc subfolder, its parent (the book folder).
 func (p *Parser) Parse(path string, probe sdk.ParseProbe) (sdk.ParsedMedia, bool) {
 	var parsed sdk.ParsedMedia
 
 	base := filepath.Base(path)
 	stem := strings.TrimSuffix(base, filepath.Ext(base))
-	dir := filepath.Dir(path)
+	dir, disc := bookDir(filepath.Dir(path))
 	leafFolder := filepath.Base(dir)
 
 	tags := probe.Tags // lowercased keys (scan lowercases them)
@@ -137,7 +151,7 @@ func (p *Parser) Parse(path string, probe sdk.ParseProbe) (sdk.ParsedMedia, bool
 	// the filename fallback below instead of parking the file in a bogus
 	// Parts group at ordinal 0 or less.
 	if track, total := trackNumber(tags["track"]); track != "" {
-		if n, err := strconv.Atoi(strings.TrimSpace(track)); err == nil && n > 0 {
+		if n, err := strconv.Atoi(strings.TrimSpace(track)); err == nil && validTrack(n, disc) {
 			parsed.Index = n
 			parsed.IndexEnd = atoi(total)
 			parsed.PartGroup = filepath.Clean(dir)
@@ -151,11 +165,20 @@ func (p *Parser) Parse(path string, probe sdk.ParseProbe) (sdk.ParsedMedia, bool
 			}
 		}
 	}
+	// A disc subfolder qualifies the ordinal so every disc's parts join one
+	// book in disc-then-track order. The disc number alone orders a disc that
+	// holds a single file. A per-disc track total does not bound the
+	// qualified Index, so it is dropped.
+	if disc > 0 {
+		parsed.Index = disc*discStride + parsed.Index
+		parsed.IndexEnd = 0
+		parsed.PartGroup = filepath.Clean(dir)
+	}
 
 	// 3. Series position (Sequence) from the folder convention
 	// "Author/Series ##/Title/" — the grandparent segment carries the series
-	// name + number. The book title folder is the leaf; its parent is the
-	// "Series ##" segment.
+	// name + number. The book title folder is the leaf (or the parent of a
+	// disc subfolder); its parent is the "Series ##" segment.
 	_, parsed.Sequence = seriesFromFolder(path)
 
 	if parsed.Title == "" {
@@ -218,22 +241,26 @@ func multiFileRefusal(path string, probe sdk.ParseProbe, parsed sdk.ParsedMedia)
 	track, _ := trackNumber(rawTrack)
 	if album != "" || rawTrack != "" {
 		ordinal, err := strconv.Atoi(track)
+		_, disc := bookDir(filepath.Dir(path))
 		switch {
 		case album == "":
 			return RefusalTaggedWithoutBook
-		case err != nil || ordinal <= 0:
+		case err != nil || !validTrack(ordinal, disc):
 			return RefusalTaggedWithoutOrdinal
 		}
 		return ""
 	}
-	if parsed.PartGroup == "" || parsed.Index <= 0 {
+	// A disc folder's number alone orders a single-file disc; beside other
+	// files each part still needs its own number.
+	if parsed.PartGroup == "" || parsed.Index%discStride <= 0 {
 		return RefusalUntaggedNoPartNumber
 	}
 	// The folder is the book only when Parse titled the file from it and an
 	// author tag does not name the folder: in the flat author-folder layout
 	// the folder is the author, even when a bare-number name leaves Parse no
-	// other title.
-	folder := cleanName(filepath.Base(filepath.Dir(path)))
+	// other title. A disc subfolder's parent is the book folder.
+	book, _ := bookDir(filepath.Dir(path))
+	folder := cleanName(filepath.Base(book))
 	if folder == "" || parsed.Title != folder || folderIsAuthor(folder, probe.Tags) {
 		return RefusalFolderNotBookTitle
 	}
@@ -242,16 +269,34 @@ func multiFileRefusal(path string, probe sdk.ParseProbe, parsed sdk.ParsedMedia)
 
 // PartMarkerTitle returns the chapter-navigation label for one file in a
 // parser-confirmed Parts group. The embedded per-track title is authoritative;
-// otherwise the filename stem, without its ordering prefix, is the label. Core
-// discovers this optional parser method through its consumer-owned interface,
-// keeping audiobook vocabulary and filename heuristics inside the plugin.
+// otherwise the filename stem, without its ordering prefix, is the label. In a
+// disc subfolder the filename label is prefixed with the disc ("Disc 2 · The
+// Door"), and a bare-number file is labelled by disc and part ("Disc 2 · Part
+// 3"), because part numbers restart on each disc. Core discovers this optional
+// parser method through its consumer-owned interface, keeping audiobook
+// vocabulary and filename heuristics inside the plugin.
 func (p *Parser) PartMarkerTitle(path string, probe sdk.ParseProbe) string {
 	if title := strings.TrimSpace(probe.Tags["title"]); title != "" {
 		return title
 	}
 	base := filepath.Base(path)
 	stem := strings.TrimSuffix(base, filepath.Ext(base))
-	return cleanName(stripLeadingOrdinal(stem))
+	label := cleanName(stripLeadingOrdinal(stem))
+	_, disc := bookDir(filepath.Dir(path))
+	if disc == 0 {
+		return label
+	}
+	prefix := "Disc " + strconv.Itoa(disc)
+	if label == "" {
+		parsed, _ := p.Parse(path, probe)
+		if part := parsed.Index % discStride; part > 0 {
+			label = "Part " + strconv.Itoa(part)
+		}
+	}
+	if label == "" {
+		return prefix
+	}
+	return prefix + " · " + label
 }
 
 // ParseMediaFields derives flat Media fields from embedded tags. Tags are the
@@ -263,6 +308,31 @@ func (p *Parser) ParseMediaFields(_ string, probe sdk.ParseProbe) []sdk.ParsedTe
 		return nil
 	}
 	return []sdk.ParsedTextField{{Name: "narrator", Text: narrator}}
+}
+
+// bookDir returns the folder that names the book for a file in dir, and the
+// disc number when dir is a disc subfolder ("Author/Title/Disc 2/") whose
+// parent is a real folder: the parent is then the book folder. Otherwise it
+// returns dir and 0. A disc folder directly under the library root cannot be
+// told apart from one under a book folder, so it takes the root's name.
+func bookDir(dir string) (string, int) {
+	m := reDiscFolder.FindStringSubmatch(filepath.Base(dir))
+	if m == nil {
+		return dir, 0
+	}
+	disc := atoi(m[1])
+	parent := filepath.Dir(dir)
+	if disc <= 0 || cleanName(filepath.Base(parent)) == "" {
+		return dir, 0
+	}
+	return parent, disc
+}
+
+// validTrack reports whether n is a usable part ordinal from a track tag: it
+// must be positive, and in a disc subfolder below discStride so the
+// disc-qualified Index stays unambiguous.
+func validTrack(n, disc int) bool {
+	return n > 0 && (disc == 0 || n < discStride)
 }
 
 // trackNumber extracts the leading number and optional total from an ID3 track
@@ -310,11 +380,14 @@ func cleanSeriesSegment(raw string) string {
 }
 
 // seriesFromFolder reads the "Author/Series ##/Title/file" convention: the
-// grandparent segment of path names the series and carries its position.
+// segment above the book folder names the series and carries its position.
+// That is path's grandparent, or one level higher for a disc subfolder
+// ("Author/Series ##/Title/Disc 1/file").
 // Both results are "" when the segment does not match; name alone is "" for a
 // bare-number segment ("03").
 func seriesFromFolder(path string) (name, sequence string) {
-	segment := filepath.Base(filepath.Dir(filepath.Dir(path)))
+	book, _ := bookDir(filepath.Dir(path))
+	segment := filepath.Base(filepath.Dir(book))
 	m := reSeriesFolder.FindStringSubmatch(cleanSeriesSegment(segment))
 	if m == nil {
 		return "", ""
