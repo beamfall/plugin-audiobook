@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 // HydratedField is the declared flag Media field Core's hydration seam sets
@@ -66,6 +67,7 @@ var (
 	personSeparators = regexp.MustCompile(`\s*(?:;|/|\s&\s|\sand\s)\s*`)
 	genreSeparators  = regexp.MustCompile(`\s*[;/]\s*`)
 	reSequence       = regexp.MustCompile(`^(\d+)(?:\.(\d+))?$`)
+	reTotal          = regexp.MustCompile(`^\d+$`)
 )
 
 // MapHydration maps one audiobook file's embedded tags (keys matched
@@ -216,16 +218,26 @@ func seriesRelation(tags map[string]string, path string) (HydrationRelation, boo
 // from a numeric "N/total" value so a text sequence keeps its slash.
 func sequenceTag(tags map[string]string) string {
 	raw := firstTag(tags, "series-part", "mvin")
-	if number, _ := trackNumber(raw); reSequence.MatchString(number) {
+	number, total := trackNumber(raw)
+	if reSequence.MatchString(number) && (total == "" || reTotal.MatchString(total)) {
 		return number
 	}
 	return raw
 }
 
-// foldKey is a case-insensitive comparison key. Upper-casing first folds
-// variants that a plain lower-case misses, such as Greek final sigma.
+// foldKey is a case-insensitive comparison key under Unicode simple case
+// folding: each rune maps to the smallest rune of its fold orbit, so Greek
+// final sigma matches sigma while Turkish dotless i stays distinct from i.
 func foldKey(value string) string {
-	return strings.ToLower(strings.ToUpper(value))
+	return strings.Map(func(r rune) rune {
+		smallest := r
+		for f := unicode.SimpleFold(r); f != r; f = unicode.SimpleFold(f) {
+			if f < smallest {
+				smallest = f
+			}
+		}
+		return smallest
+	}, value)
 }
 
 // normaliseSequence trims leading zeros from the whole part and trailing zeros
