@@ -57,8 +57,8 @@ type Hydration struct {
 }
 
 // maxSequenceSortValue bounds a sequence before it is scaled to a sort order,
-// so an absurd tag cannot overflow the integer.
-const maxSequenceSortValue = 1e9
+// so an absurd tag cannot overflow the integer, even a 32-bit one.
+const maxSequenceSortValue = 1e6
 
 var (
 	// Multi-value separators for people and genres. Commas are not split: a
@@ -144,7 +144,7 @@ func splitValues(raw string, separators *regexp.Regexp) []string {
 	seen := map[string]bool{}
 	for _, part := range separators.Split(raw, -1) {
 		value := strings.Join(strings.Fields(part), " ")
-		key := strings.ToLower(value)
+		key := foldKey(value)
 		if value == "" || seen[key] {
 			continue
 		}
@@ -172,7 +172,7 @@ func credits(tags map[string]string) []HydrationRelation {
 	byName := map[string]*credit{}
 	for _, source := range sources {
 		for _, name := range splitValues(source.raw, personSeparators) {
-			key := strings.ToLower(name)
+			key := foldKey(name)
 			person := byName[key]
 			if person == nil {
 				person = &credit{name: name}
@@ -204,13 +204,28 @@ func seriesRelation(tags map[string]string, path string) (HydrationRelation, boo
 		From: HydrationEntity{Kind: KindSeries, Title: strings.Join(strings.Fields(name), " ")},
 		Name: RelationContainsBook,
 	}
-	rawSequence, _ := trackNumber(firstTag(tags, "series-part", "mvin"))
-	sequence, sortOrder := normaliseSequence(firstNonEmpty(rawSequence, folderSequence))
+	sequence, sortOrder := normaliseSequence(firstNonEmpty(sequenceTag(tags), folderSequence))
 	if sequence != "" {
 		relation.Attributes = map[string]string{AttributeSequence: sequence}
 		relation.SortOrder = sortOrder
 	}
 	return relation, true
+}
+
+// sequenceTag returns series-part, else mvin, dropping a "/total" suffix only
+// from a numeric "N/total" value so a text sequence keeps its slash.
+func sequenceTag(tags map[string]string) string {
+	raw := firstTag(tags, "series-part", "mvin")
+	if number, _ := trackNumber(raw); reSequence.MatchString(number) {
+		return number
+	}
+	return raw
+}
+
+// foldKey is a case-insensitive comparison key. Upper-casing first folds
+// variants that a plain lower-case misses, such as Greek final sigma.
+func foldKey(value string) string {
+	return strings.ToLower(strings.ToUpper(value))
 }
 
 // normaliseSequence trims leading zeros from the whole part and trailing zeros
