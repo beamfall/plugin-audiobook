@@ -86,8 +86,8 @@ var (
 	reSeriesFolder = regexp.MustCompile(`^(.*?)[ -]+(?:(?i:book)[ -]*|#)?(\d{1,3}(?:\.\d{1,3})?)$`)
 
 	// A disc subfolder of a multi-disc rip: "Disc 1", "disc01", "Disk 3",
-	// "CD2", "CD 02". Captures the disc number. Only these keywords qualify:
-	// "Part 1" or "Volume 2" folders are not discs.
+	// "CD2", "CD 02". Captures the disc number; bookDir accepts 1–999. Only
+	// these keywords qualify: "Part 1" or "Volume 2" folders are not discs.
 	reDiscFolder = regexp.MustCompile(`(?i)^(?:disc|disk|cd)[ ._-]?(\d{1,3})$`)
 
 	cleanNameReplacer = strings.NewReplacer(".", " ", "_", " ")
@@ -106,7 +106,8 @@ const discStride = 10000
 //
 // Field mapping onto the domain-agnostic seam (sdk.ParsedMedia, named by
 // shape):
-//   - Title    — the book title (tag "album", else the leaf folder name).
+//   - Title    — the book title (tag "album", else the leaf folder name; a
+//     disc subfolder's parent folder name, whatever the tags).
 //   - Class    — always "audiobook" when a title is found (single MediaClass).
 //   - Sequence — the book's position in its Series (folder "Series ## /");
 //     empty when the book is not part of a recognised series.
@@ -127,7 +128,13 @@ func (p *Parser) Parse(path string, probe sdk.ParseProbe) (sdk.ParsedMedia, bool
 
 	// 1. Title — tags-primary. The "album" tag is the book; "title" on a
 	// per-chapter file is the chapter, so album wins for the book title.
-	parsed.Title = strings.TrimSpace(tags["album"])
+	// Disc subfolders are the exception: the book folder titles them, because
+	// rips often tag each disc's album differently ("Novel (Disc 1)"), and a
+	// rescan parses an unchanged single-file disc without its tags, so only a
+	// path-derived title keeps every disc on one grouping key.
+	if disc == 0 {
+		parsed.Title = strings.TrimSpace(tags["album"])
+	}
 	if parsed.Title == "" {
 		// No album tag: the leaf folder usually names the book (the
 		// "Author/Series ##/Title/" convention). Two exceptions fall back to the
@@ -205,6 +212,13 @@ func (p *Parser) Parse(path string, probe sdk.ParseProbe) (sdk.ParsedMedia, bool
 // files stays out of the library.
 func (p *Parser) ParseWithContext(path string, probe sdk.ParseProbe, context sdk.ParseContext) (sdk.ParsedMedia, bool) {
 	parsed, ok := p.Parse(path, probe)
+	if context.DirectoryMediaFileCount == sdk.DirectoryMediaFileCountSingle && ok {
+		// A rescan parses an unchanged single-file folder without its tags,
+		// so a lone file in a disc folder is ordered by the disc alone.
+		if _, disc := bookDir(filepath.Dir(path)); disc > 0 {
+			parsed.Index = disc * discStride
+		}
+	}
 	if context.DirectoryMediaFileCount != sdk.DirectoryMediaFileCountMultiple || !ok {
 		return parsed, ok
 	}

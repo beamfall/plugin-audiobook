@@ -1,6 +1,6 @@
 - [x] Treat a disc/disk/cd subfolder's parent as the book folder (PartGroup, title, series)
 - [x] Disc-qualified Index (`disc * 10000 + track`) and multi-file refusals on the book folder
 - [x] Disc-qualified part marker titles
-- [x] Tests: disc folders join one book in disc-then-track order, lookalikes stay apart, refusals
+- [x] Tests: disc folders join one book in disc-then-track order, lookalikes stay apart, refusals, single-file disc stable without tags
 - [ ] Tag a release; core repins it (coordinator)
 - [ ] `script/gate.sh`, then `openspec archive core-3017-disc-subfolders`

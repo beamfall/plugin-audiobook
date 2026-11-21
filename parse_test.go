@@ -278,16 +278,16 @@ func TestDiscSubfoldersJoinOneBook(t *testing.T) {
 			order:   []string{"CD1/01.mp3", "cd 2/01.mp3", "Disc 03/01.mp3", "DISK4/01.mp3", "disc_5/01.mp3"},
 		},
 		{
-			name:  "album tag titles the book and track tags order each disc",
+			name:  "book folder titles per-disc album tags; track tags order each disc",
 			book:  "/lib/audiobooks/Invented Author/Folder Name",
 			files: []string{"Disc 1/b.mp3", "Disc 1/a.mp3", "Disc 2/a.mp3"},
 			tags: map[string]map[string]string{
-				"Disc 1/b.mp3": {"album": "Tagged Title", "track": "2/2"},
-				"Disc 1/a.mp3": {"album": "Tagged Title", "track": "1/2"},
-				"Disc 2/a.mp3": {"album": "Tagged Title", "track": "1/1"},
+				"Disc 1/b.mp3": {"album": "Tagged Title (Disc 1)", "track": "2/2"},
+				"Disc 1/a.mp3": {"album": "Tagged Title (Disc 1)", "track": "1/2"},
+				"Disc 2/a.mp3": {"album": "Tagged Title (Disc 2)", "track": "1/1"},
 			},
 			context: multi,
-			title:   "Tagged Title",
+			title:   "Folder Name",
 			order:   []string{"Disc 1/a.mp3", "Disc 1/b.mp3", "Disc 2/a.mp3"},
 		},
 		{
@@ -352,6 +352,7 @@ func TestDiscFolderLookalikesDoNotMerge(t *testing.T) {
 		{"disc word inside a title", "/lib/Author/Disc One Rising/01.mp3", "/lib/Author/Disc One Rising", "Disc One Rising"},
 		{"disc with trailing words", "/lib/Author/Saga/Disc 1 Bonus/01.mp3", "/lib/Author/Saga/Disc 1 Bonus", "Disc 1 Bonus"},
 		{"sibling book folders stay apart", "/lib/Author/Book B/01.mp3", "/lib/Author/Book B", "Book B"},
+		{"disc zero is not a disc", "/lib/Author/Saga/Disc 0/01.mp3", "/lib/Author/Saga/Disc 0", "Disc 0"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -386,5 +387,22 @@ func TestDiscFolderRefusals(t *testing.T) {
 				t.Fatalf("refusal = %q, want %q", got, tt.reason)
 			}
 		})
+	}
+}
+
+// TestSingleFileDiscStableAcrossRescan pins that a lone file in a disc folder
+// parses to the same grouping key and Index with or without its tags: core's
+// rescan fast path parses an unchanged single-file folder without a probe.
+func TestSingleFileDiscStableAcrossRescan(t *testing.T) {
+	single := sdk.ParseContext{DirectoryMediaFileCount: sdk.DirectoryMediaFileCountSingle}
+	path := "/lib/Author/Folder Name/Disc 2/03 - Finale.mp3"
+	parser := New()
+	tagged, okTagged := parser.ParseWithContext(path, sdk.ParseProbe{Tags: map[string]string{"album": "Novel (Disc 2)", "track": "7/9"}}, single)
+	bare, okBare := parser.ParseWithContext(path, sdk.ParseProbe{}, single)
+	if !okTagged || !okBare || tagged.Title != bare.Title || tagged.PartGroup != bare.PartGroup || tagged.Index != bare.Index {
+		t.Fatalf("tagged = %+v, bare = %+v, want the same grouping key and Index", tagged, bare)
+	}
+	if bare.Index != 2*discStride || bare.Title != "Folder Name" || bare.PartGroup != "/lib/Author/Folder Name" {
+		t.Fatalf("bare = %+v, want Index %d, book folder title and group", bare, 2*discStride)
 	}
 }
