@@ -415,3 +415,14 @@ func TestDiscTitleIgnoresAuthorTags(t *testing.T) {
 		t.Fatalf("parsed = %+v, want the book folder title the untagged rescan also derives", parsed)
 	}
 }
+
+func TestSeriesFromFolderSkipsDiscSubfolder(t *testing.T) {
+	for _, path := range []string{
+		"/lib/Invented Author/Invented Saga 04/The Copper Lantern/01.mp3",
+		"/lib/Invented Author/Invented Saga 04/The Copper Lantern/CD 2/01.mp3",
+	} {
+		if name, sequence := seriesFromFolder(path); name != "Invented Saga" || sequence != "04" {
+			t.Fatalf("seriesFromFolder(%q) = %q, %q, want Invented Saga, 04", path, name, sequence)
+		}
+	}
+}
