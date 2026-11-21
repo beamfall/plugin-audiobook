@@ -28,8 +28,8 @@ func Bundle() sdk.Bundle {
 	return sdk.Bundle{
 		ID:          "audiobook",
 		Version:     "0.1.4",
-		SDKFloor:    "0.4.6",
-		SDKCeiling:  "0.4.6",
+		SDKFloor:    "0.4.7",
+		SDKCeiling:  "0.4.7",
 		DisplayName: sdk.LocaleString{"en": "Audiobooks", "fr": "Livres audio"},
 		// An audiobook is one Media — display label only, never a schema
 		// identifier.
@@ -64,9 +64,10 @@ func Bundle() sdk.Bundle {
 				// relations. The Person browse split "Wrote"/"Narrated" is the
 				// relation `role` attribute, the Music Artist "Albums"/"Appears
 				// on" precedent.
-				Name:        "person",
-				DisplayName: sdk.LocaleString{"en": "Person", "fr": "Personne"},
-				Archetype:   "person",
+				Name:              "person",
+				DisplayName:       sdk.LocaleString{"en": "Person", "fr": "Personne"},
+				PluralDisplayName: sdk.LocaleString{"en": "People", "fr": "Personnes"},
+				Archetype:         "person",
 				Fields: []sdk.FieldSpec{
 					{Name: "sort-name", Type: "text",
 						Label: sdk.LocaleString{"en": "Sort Name", "fr": "Nom de tri"}},
@@ -91,10 +92,11 @@ func Bundle() sdk.Bundle {
 				// the integer sort_order column (OrderedChildren) is the coarse
 				// play order; the fractional sequence is the displayed/sorted
 				// book number the client orders by.
-				Name:            "series",
-				DisplayName:     sdk.LocaleString{"en": "Series", "fr": "Série"},
-				Archetype:       "container",
-				OrderedChildren: true,
+				Name:              "series",
+				DisplayName:       sdk.LocaleString{"en": "Series", "fr": "Série"},
+				PluralDisplayName: sdk.LocaleString{"en": "Series", "fr": "Séries"},
+				Archetype:         "container",
+				OrderedChildren:   true,
 				Fields: []sdk.FieldSpec{
 					{Name: "summary", Type: "text", Searchable: true,
 						Label: sdk.LocaleString{"en": "Summary", "fr": "Résumé"}},
@@ -110,9 +112,10 @@ func Bundle() sdk.Bundle {
 			},
 			{
 				// Flat, like the Music Genre Kind; no genre hierarchy.
-				Name:        "genre",
-				DisplayName: sdk.LocaleString{"en": "Genre", "fr": "Genre"},
-				Archetype:   "category",
+				Name:              "genre",
+				DisplayName:       sdk.LocaleString{"en": "Genre", "fr": "Genre"},
+				PluralDisplayName: sdk.LocaleString{"en": "Genres", "fr": "Genres"},
+				Archetype:         "category",
 				Relations: []sdk.RelationSpec{
 					// Genre → Media: the per-book genre link scrapers hydrate.
 					{Name: "genre-of", ToKind: sdk.MediaKindName},
