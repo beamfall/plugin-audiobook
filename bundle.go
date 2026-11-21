@@ -44,8 +44,9 @@ func Bundle() sdk.Bundle {
 		// dependable narrator source) — the open scrapers below carry no
 		// narrator — so it lands as a Media field the scan-side tag reader fills;
 		// it is NOT a Person credit relation here because the open scrapers
-		// cannot hydrate it and the embedded tag is a flat string. ISBN/ASIN are
-		// identification keys the scrapers look up against.
+		// cannot hydrate it and the embedded tag is a flat string. Core's tag
+		// hydration (MapHydration) additionally writes narrator Person credits.
+		// ISBN/ASIN are identification keys the scrapers look up against.
 		MediaFields: []sdk.FieldSpec{
 			{Name: "narrator", Type: "text", Filterable: true,
 				Label: sdk.LocaleString{"en": "Narrator", "fr": "Narrateur"}},
@@ -55,6 +56,10 @@ func Bundle() sdk.Bundle {
 				Label: sdk.LocaleString{"en": "ISBN", "fr": "ISBN"}},
 			{Name: "release-date", Type: "date", Sortable: true,
 				Label: sdk.LocaleString{"en": "Release Date", "fr": "Date de sortie"}},
+			// Set by Core's hydration seam once a book's tag-derived credits,
+			// series and genres are written (hydrate.go).
+			{Name: HydratedField, Type: "flag",
+				Label: sdk.LocaleString{"en": "Hydrated From Tags", "fr": "Enrichi depuis les tags"}},
 		},
 		EntityKinds: []sdk.EntityKind{
 			{
@@ -64,7 +69,7 @@ func Bundle() sdk.Bundle {
 				// relations. The Person browse split "Wrote"/"Narrated" is the
 				// relation `role` attribute, the Music Artist "Albums"/"Appears
 				// on" precedent.
-				Name:              "person",
+				Name:              KindPerson,
 				DisplayName:       sdk.LocaleString{"en": "Person", "fr": "Personne"},
 				PluralDisplayName: sdk.LocaleString{"en": "People", "fr": "Personnes"},
 				Archetype:         "person",
@@ -80,7 +85,7 @@ func Bundle() sdk.Bundle {
 					// one relation, the attribute distinguishes the credit, so a
 					// self-narrating author is two rows on one Person, never a
 					// duplicate entity. "credit is a relation, never an Entity."
-					{Name: "credited-on", ToKind: sdk.MediaKindName, Attributes: []string{"role"}},
+					{Name: RelationCreditedOn, ToKind: sdk.MediaKindName, Attributes: []string{AttributeRole}},
 				},
 			},
 			{
@@ -92,7 +97,7 @@ func Bundle() sdk.Bundle {
 				// the integer sort_order column (OrderedChildren) is the coarse
 				// play order; the fractional sequence is the displayed/sorted
 				// book number the client orders by.
-				Name:              "series",
+				Name:              KindSeries,
 				DisplayName:       sdk.LocaleString{"en": "Series", "fr": "Série"},
 				PluralDisplayName: sdk.LocaleString{"en": "Series", "fr": "Séries"},
 				Archetype:         "container",
@@ -107,18 +112,18 @@ func Bundle() sdk.Bundle {
 					// attribute, never an integer, so half-numbered novellas fit.
 					// The Author of a Series is derived from its
 					// books' Person credits, not a separate relation.
-					{Name: "contains-book", ToKind: sdk.MediaKindName, Attributes: []string{"sequence"}},
+					{Name: RelationContainsBook, ToKind: sdk.MediaKindName, Attributes: []string{AttributeSequence}},
 				},
 			},
 			{
 				// Flat, like the Music Genre Kind; no genre hierarchy.
-				Name:              "genre",
+				Name:              KindGenre,
 				DisplayName:       sdk.LocaleString{"en": "Genre", "fr": "Genre"},
 				PluralDisplayName: sdk.LocaleString{"en": "Genres", "fr": "Genres"},
 				Archetype:         "category",
 				Relations: []sdk.RelationSpec{
 					// Genre → Media: the per-book genre link scrapers hydrate.
-					{Name: "genre-of", ToKind: sdk.MediaKindName},
+					{Name: RelationGenreOf, ToKind: sdk.MediaKindName},
 				},
 			},
 		},

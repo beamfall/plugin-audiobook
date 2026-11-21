@@ -156,10 +156,7 @@ func (p *Parser) Parse(path string, probe sdk.ParseProbe) (sdk.ParsedMedia, bool
 	// "Author/Series ##/Title/" — the grandparent segment carries the series
 	// name + number. The book title folder is the leaf; its parent is the
 	// "Series ##" segment.
-	seriesSegment := filepath.Base(filepath.Dir(dir))
-	if m := reSeriesFolder.FindStringSubmatch(cleanSeriesSegment(seriesSegment)); m != nil {
-		parsed.Sequence = m[2]
-	}
+	_, parsed.Sequence = seriesFromFolder(path)
 
 	if parsed.Title == "" {
 		return sdk.ParsedMedia{}, false
@@ -310,6 +307,19 @@ func cleanSeriesSegment(raw string) string {
 		return ""
 	}
 	return strings.Join(strings.Fields(strings.ReplaceAll(raw, "_", " ")), " ")
+}
+
+// seriesFromFolder reads the "Author/Series ##/Title/file" convention: the
+// grandparent segment of path names the series and carries its position.
+// Both results are "" when the segment does not match; name alone is "" for a
+// bare-number segment ("03").
+func seriesFromFolder(path string) (name, sequence string) {
+	segment := filepath.Base(filepath.Dir(filepath.Dir(path)))
+	m := reSeriesFolder.FindStringSubmatch(cleanSeriesSegment(segment))
+	if m == nil {
+		return "", ""
+	}
+	return strings.TrimSpace(m[1]), m[2]
 }
 
 // folderIsAuthor reports whether a leaf folder being used as the title fallback
