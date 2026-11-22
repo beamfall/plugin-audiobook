@@ -1,0 +1,4 @@
+- [ ] Add the `next-in-series` shelf after Continue Listening in the home Layout
+- [ ] Test: the home Layout's second section is the `next-up` shelf
+- [ ] Tag a release; core repins it
+- [ ] `script/gate.sh`, then `openspec archive core-3013-next-in-series-shelf`
