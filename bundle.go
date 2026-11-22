@@ -141,6 +141,16 @@ func Bundle() sdk.Bundle {
 				Source:      sdk.SourceSpec{Kind: "continue-watching"},
 			},
 			{
+				// The first unfinished book of each series the Profile has
+				// started, in sequence order (core's next-up Source). It only
+				// lists the book: nothing auto-plays (ADR-0055 §2.4).
+				ID:          "next-in-series",
+				Kind:        "shelf",
+				Title:       sdk.LocaleString{"en": "Next in Series", "fr": "Suite de la série"},
+				ArtworkSlot: "poster",
+				Source:      sdk.SourceSpec{Kind: "next-up"},
+			},
+			{
 				ID:          "recently-added",
 				Kind:        "shelf",
 				Title:       sdk.LocaleString{"en": "Recently Added", "fr": "Ajouts récents"},

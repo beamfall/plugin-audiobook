@@ -137,6 +137,26 @@ func fetchOpenLibraryAnthologyAuthors(t *testing.T, client doer, endpoint string
 	return authors
 }
 
+// TestHomeLeadsWithContinueThenNextInSeries pins the home Layout's first two
+// shelves: resume first, then the next book of each started series (CORE-3013).
+func TestHomeLeadsWithContinueThenNextInSeries(t *testing.T) {
+	for _, layout := range Bundle().Layouts {
+		if layout.ID != "home" {
+			continue
+		}
+		if len(layout.Sections) < 2 {
+			t.Fatalf("home has %d sections, want at least 2", len(layout.Sections))
+		}
+		first, second := layout.Sections[0], layout.Sections[1]
+		if first.ID != "continue-listening" || second.ID != "next-in-series" || second.Source.Kind != "next-up" {
+			t.Fatalf("home leads with %q then %q (%q), want continue-listening then next-in-series (next-up)",
+				first.ID, second.ID, second.Source.Kind)
+		}
+		return
+	}
+	t.Fatal("bundle has no home Layout")
+}
+
 // wantBundleVersion is the release semver this head carries: the release step
 // tags the head `v`+wantBundleVersion, so a bundle Version left behind by a
 // tag bump fails here instead of shipping a stale identity.
