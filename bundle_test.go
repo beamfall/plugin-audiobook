@@ -180,3 +180,15 @@ func TestBundleCompatibleWithPinnedSDK(t *testing.T) {
 		t.Fatalf("Bundle() compat range [%s, %s] excludes pinned SDK %s", b.SDKFloor, b.SDKCeiling, sdk.Version)
 	}
 }
+
+// TestBundlePlaysAloneAndResumes: a book plays alone (no auto-advance into or
+// out of it, ADR-0055 §2.4) and still resumes mid-play.
+func TestBundlePlaysAloneAndResumes(t *testing.T) {
+	e := Bundle().Engagement
+	if !e.PlaysAlone {
+		t.Fatal("Bundle().Engagement.PlaysAlone = false, want true")
+	}
+	if e.ResumeMedia == nil || !*e.ResumeMedia {
+		t.Fatalf("Bundle().Engagement.ResumeMedia = %v, want true", e.ResumeMedia)
+	}
+}

@@ -2,6 +2,6 @@ module github.com/beamfall/plugin-audiobook
 
 go 1.27.4
 
-require github.com/beamfall/plugin-sdk v0.4.7
+require github.com/beamfall/plugin-sdk v0.4.11
 
 require golang.org/x/text v0.40.0 // indirect

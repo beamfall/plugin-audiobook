@@ -38,8 +38,10 @@ func Bundle() sdk.Bundle {
 		// Audiobooks resume mid-play, like podcast episodes — the one place the
 		// audio no-resume default is wrong (resume eligibility is declarative,
 		// not a class convention). One book is one logical timeline across its
-		// Parts, so one resume position.
-		Engagement: sdk.Engagement{ResumeMedia: boolPtr(true)},
+		// Parts, so one resume position. A book also plays alone (ADR-0055
+		// §2.4): it never auto-advances into the next book, nor another item
+		// into it — unlike podcast episodes, which resume but keep queueing.
+		Engagement: sdk.Engagement{ResumeMedia: boolPtr(true), PlaysAlone: true},
 		// Media (the book) fields. Narrator is tags-primary (tags are the
 		// dependable narrator source) — the open scrapers below carry no
 		// narrator — so it lands as a Media field the scan-side tag reader fills;
