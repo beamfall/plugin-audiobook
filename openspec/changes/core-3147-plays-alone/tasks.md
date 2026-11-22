@@ -1,0 +1,5 @@
+- [x] Pin plugin SDK v0.4.11 (SDK identity, and so the declared range, stays 0.4.7)
+- [x] Set `Engagement.PlaysAlone` in the bundle
+- [x] Test: the bundle declares PlaysAlone and keeps ResumeMedia
+- [x] `script/gate.sh`, then `openspec archive core-3147-plays-alone`
+- [ ] Core repins the release (CORE-3147 core branch)
