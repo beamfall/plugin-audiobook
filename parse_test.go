@@ -166,27 +166,11 @@ func TestAmbiguousMultiFileFolderStillRefusedWithReason(t *testing.T) {
 		reason string
 	}{
 		{
-			name:   "unrelated unnumbered files",
+			name:   "unrelated unnumbered files in per-file context",
 			dir:    "/lib/audiobooks/Mixed Downloads",
 			files:  []string{"01 - Opening.mp3", "Harbour Interview.mp3", "Station Notes.mp3"},
 			file:   "Harbour Interview.mp3",
 			reason: RefusalUntaggedNoPartNumber,
-		},
-		{
-			name:   "flat author folder titles each file separately",
-			dir:    "/lib/audiobooks/Invented Author",
-			files:  []string{"01 First Story.mp3", "02 Second Story.mp3"},
-			tags:   map[string]map[string]string{"01 First Story.mp3": {"artist": "Invented Author"}, "02 Second Story.mp3": {"artist": "Invented Author"}},
-			file:   "01 First Story.mp3",
-			reason: RefusalFolderNotBookTitle,
-		},
-		{
-			name:   "author folder with bare-number files",
-			dir:    "/lib/audiobooks/Invented Author",
-			files:  []string{"01.mp3", "02.mp3"},
-			tags:   map[string]map[string]string{"01.mp3": {"artist": "Invented Author"}, "02.mp3": {"artist": "Invented Author"}},
-			file:   "01.mp3",
-			reason: RefusalFolderNotBookTitle,
 		},
 		{
 			name:   "malformed ordinal tag without book",
@@ -197,20 +181,12 @@ func TestAmbiguousMultiFileFolderStillRefusedWithReason(t *testing.T) {
 			reason: RefusalTaggedWithoutBook,
 		},
 		{
-			name:   "book tag without ordinal",
+			name:   "book tag without track or filename ordinal",
 			dir:    "/lib/audiobooks/Tagged Book",
-			files:  []string{"01.mp3", "02.mp3"},
-			tags:   map[string]map[string]string{"02.mp3": {"album": "Tagged Book"}},
-			file:   "02.mp3",
+			files:  []string{"01.mp3", "Prologue.mp3"},
+			tags:   map[string]map[string]string{"Prologue.mp3": {"album": "Tagged Book"}},
+			file:   "Prologue.mp3",
 			reason: RefusalTaggedWithoutOrdinal,
-		},
-		{
-			name:   "ordinal tag without book",
-			dir:    "/lib/audiobooks/Tagged Book",
-			files:  []string{"01.mp3", "02.mp3"},
-			tags:   map[string]map[string]string{"02.mp3": {"track": "2"}},
-			file:   "02.mp3",
-			reason: RefusalTaggedWithoutBook,
 		},
 	}
 	for _, tt := range tests {
@@ -374,7 +350,6 @@ func TestDiscFolderRefusals(t *testing.T) {
 		reason string
 	}{
 		{"unnumbered file beside other disc files", "/lib/Author/Title/Disc 1/Interview.mp3", nil, RefusalUntaggedNoPartNumber},
-		{"author tag names the book folder", "/lib/Author/Disc 1/01.mp3", map[string]string{"artist": "Author"}, RefusalFolderNotBookTitle},
 		{"track tag too large to qualify by disc", "/lib/Author/Title/Disc 1/01.mp3", map[string]string{"album": "Title", "track": "10000"}, RefusalTaggedWithoutOrdinal},
 	}
 	for _, tt := range tests {

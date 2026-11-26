@@ -416,8 +416,9 @@ func TestParseWithContextConformance(t *testing.T) {
 		{Name: "tagged multi-file grouping is safe", Path: path, Probe: tagged, Context: sdk.ParseContext{DirectoryMediaFileCount: sdk.DirectoryMediaFileCountMultiple}, Want: parsed, WantOK: true},
 		{Name: "untagged numbered part folds under its folder", Path: path, Context: sdk.ParseContext{DirectoryMediaFileCount: sdk.DirectoryMediaFileCountMultiple}, Want: parsed, WantOK: true},
 		{Name: "untagged unnumbered multi-file part is ambiguous", Path: "/lib/audiobooks/Author/Title/Chapter.m4b", Context: sdk.ParseContext{DirectoryMediaFileCount: sdk.DirectoryMediaFileCountMultiple}, Want: sdk.ParsedMedia{}, WantOK: false},
-		{Name: "multi-file grouping without book tag is ambiguous", Path: path, Probe: sdk.ParseProbe{Tags: map[string]string{"track": "1"}}, Context: sdk.ParseContext{DirectoryMediaFileCount: sdk.DirectoryMediaFileCountMultiple}, Want: sdk.ParsedMedia{}, WantOK: false},
-		{Name: "multi-file grouping without ordering tag is ambiguous", Path: path, Probe: sdk.ParseProbe{Tags: map[string]string{"album": "Title"}}, Context: sdk.ParseContext{DirectoryMediaFileCount: sdk.DirectoryMediaFileCountMultiple}, Want: sdk.ParsedMedia{}, WantOK: false},
+		{Name: "partial track tag uses book folder title", Path: path, Probe: sdk.ParseProbe{Tags: map[string]string{"track": "1"}}, Context: sdk.ParseContext{DirectoryMediaFileCount: sdk.DirectoryMediaFileCountMultiple}, Want: parsed, WantOK: true},
+		{Name: "partial album tag uses filename ordinal", Path: path, Probe: sdk.ParseProbe{Tags: map[string]string{"album": "Title"}}, Context: sdk.ParseContext{DirectoryMediaFileCount: sdk.DirectoryMediaFileCountMultiple}, Want: parsed, WantOK: true},
+		{Name: "album tag without any part ordinal is ambiguous", Path: "/lib/audiobooks/Author/Title/Chapter.m4b", Probe: sdk.ParseProbe{Tags: map[string]string{"album": "Title"}}, Context: sdk.ParseContext{DirectoryMediaFileCount: sdk.DirectoryMediaFileCountMultiple}, Want: sdk.ParsedMedia{}, WantOK: false},
 		{Name: "future context preserves legacy parse", Path: path, Probe: tagged, Context: sdk.ParseContext{DirectoryMediaFileCount: sdk.DirectoryMediaFileCount("future")}, Want: parsed, WantOK: true},
 	})
 }
