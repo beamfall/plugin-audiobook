@@ -395,9 +395,172 @@ func TestSeriesFromFolderSkipsDiscSubfolder(t *testing.T) {
 	for _, path := range []string{
 		"/lib/Invented Author/Invented Saga 04/The Copper Lantern/01.mp3",
 		"/lib/Invented Author/Invented Saga 04/The Copper Lantern/CD 2/01.mp3",
+		"/lib/Invented Author/Invented Saga 04/The Copper Lantern/Audiobook/01.mp3",
+		"/lib/Invented Author/Invented Saga 04/The Copper Lantern/Audiobook/CD 2/01.mp3",
 	} {
 		if name, sequence := seriesFromFolder(path); name != "Invented Saga" || sequence != "04" {
 			t.Fatalf("seriesFromFolder(%q) = %q, %q, want Invented Saga, 04", path, name, sequence)
 		}
+	}
+}
+
+func TestDiscMarkersInAlbumTagsAndFilenamesJoinOneBook(t *testing.T) {
+	parser := New()
+	multi := sdk.ParseContext{DirectoryMediaFileCount: sdk.DirectoryMediaFileCountMultiple}
+
+	t.Run("Mortality album tag disc markers share one title and order by disc then track", func(t *testing.T) {
+		dir := "/lib/Christopher Hitchens/Mortality"
+		p1, ok1 := parser.ParseWithContext(dir+"/01.mp3", sdk.ParseProbe{
+			HasAudio: true,
+			Tags:     map[string]string{"album": "Mortality - Unabridged - [Disc 1]", "track": "1"},
+		}, multi)
+		p2, ok2 := parser.ParseWithContext(dir+"/16.mp3", sdk.ParseProbe{
+			HasAudio: true,
+			Tags:     map[string]string{"album": "Mortality - Unabridged - [Disc 2]", "track": "1"},
+		}, multi)
+		if !ok1 || !ok2 {
+			t.Fatalf("expected both discs to parse, got ok1=%v ok2=%v", ok1, ok2)
+		}
+		if p1.Title != "Mortality" || p2.Title != "Mortality" {
+			t.Fatalf("titles = %q / %q, want \"Mortality\"", p1.Title, p2.Title)
+		}
+		if p1.PartGroup != dir || p2.PartGroup != dir {
+			t.Fatalf("PartGroup = %q / %q, want %q", p1.PartGroup, p2.PartGroup, dir)
+		}
+		if p1.Index != 10001 || p2.Index != 20001 {
+			t.Fatalf("indices = %d / %d, want 10001 / 20001", p1.Index, p2.Index)
+		}
+	})
+
+	t.Run("disc markers in filenames without disc folders", func(t *testing.T) {
+		dir := "/lib/Author/Chronicle"
+		cases := []struct {
+			file    string
+			wantIdx int
+		}{
+			{"01 - Chronicle [Disc 1].mp3", 10001},
+			{"01 - Chronicle (Disk 3).mp3", 30001},
+			{"CD1 - 02 - Chronicle.mp3", 10002},
+			{"03 - Chronicle - Disc 2.mp3", 20003},
+		}
+		for _, tc := range cases {
+			got, ok := parser.ParseWithContext(dir+"/"+tc.file, sdk.ParseProbe{HasAudio: true}, multi)
+			if !ok || got.Title != "Chronicle" || got.Index != tc.wantIdx || got.PartGroup != dir {
+				t.Fatalf("%s: got %+v ok=%v, want Title=Chronicle Index=%d PartGroup=%q", tc.file, got, ok, tc.wantIdx, dir)
+			}
+		}
+	})
+
+	t.Run("disc marker followed by noise, disc-only album, and inline filename disc", func(t *testing.T) {
+		p1, ok1 := parser.ParseWithContext("/lib/Author/Book/01.mp3", sdk.ParseProbe{
+			HasAudio: true,
+			Tags:     map[string]string{"album": "Book - Disc 2 (Unabridged)", "track": "1"},
+		}, multi)
+		if !ok1 || p1.Title != "Book" || p1.Index != 20001 {
+			t.Fatalf("noise after disc: got %+v ok=%v", p1, ok1)
+		}
+		p2, ok2 := parser.ParseWithContext("/lib/Author/Book/01.mp3", sdk.ParseProbe{
+			HasAudio: true,
+			Tags:     map[string]string{"album": "Disc 2", "track": "1"},
+		}, multi)
+		if !ok2 || p2.Title != "Book" || p2.Index != 20001 {
+			t.Fatalf("disc-only album: got %+v ok=%v", p2, ok2)
+		}
+		p3, ok3 := parser.ParseWithContext("/lib/Author/Book Disk 1 Part 1.mp3", sdk.ParseProbe{
+			HasAudio: true,
+			Tags:     map[string]string{"artist": "Author"},
+		}, multi)
+		if !ok3 || p3.Title != "Book" || p3.Index != 10001 {
+			t.Fatalf("inline filename disc: got %+v ok=%v", p3, ok3)
+		}
+	})
+}
+
+func TestWrapperSubfoldersFlattenedToParentBook(t *testing.T) {
+	parser := New()
+	single := sdk.ParseContext{DirectoryMediaFileCount: sdk.DirectoryMediaFileCountSingle}
+	multi := sdk.ParseContext{DirectoryMediaFileCount: sdk.DirectoryMediaFileCountMultiple}
+
+	cases := []struct {
+		name      string
+		path      string
+		tags      map[string]string
+		ctx       sdk.ParseContext
+		wantTitle string
+		wantGroup string
+		wantIdx   int
+	}{
+		{
+			name:      "A Woman First/Audiobook",
+			path:      "/mnt/user/audio/books/A Woman First/Audiobook/01.mp3",
+			ctx:       multi,
+			wantTitle: "A Woman First",
+			wantGroup: "/mnt/user/audio/books/A Woman First",
+			wantIdx:   1,
+		},
+		{
+			name:      "Chaos(Audiobook)/Chaos",
+			path:      "/mnt/user/audio/books/Chaos(Audiobook)/Chaos/Chaos.m4b",
+			ctx:       single,
+			wantTitle: "Chaos",
+		},
+		{
+			name:      "I, Partridge/Audiobook",
+			path:      "/mnt/user/audio/books/I, Partridge/Audiobook/01.mp3",
+			ctx:       multi,
+			wantTitle: "I, Partridge",
+			wantGroup: "/mnt/user/audio/books/I, Partridge",
+			wantIdx:   1,
+		},
+		{
+			name:      "Josh Peck/Audiobook",
+			path:      "/mnt/user/audio/books/Josh Peck/Audiobook/01.mp3",
+			ctx:       multi,
+			wantTitle: "Josh Peck",
+			wantGroup: "/mnt/user/audio/books/Josh Peck",
+			wantIdx:   1,
+		},
+		{
+			name:      "Audio/MP3/M4B wrappers",
+			path:      "/lib/Author/Book Title/MP3/02.mp3",
+			ctx:       multi,
+			wantTitle: "Book Title",
+			wantGroup: "/lib/Author/Book Title",
+			wantIdx:   2,
+		},
+		{
+			name:      "M4B wrapper",
+			path:      "/lib/Author/Book Title/M4B/Book.m4b",
+			ctx:       single,
+			wantTitle: "Book Title",
+		},
+		{
+			name:      "Audio wrapper with Disc subfolder",
+			path:      "/lib/Author/Book Title/Audio/Disc 2/01.mp3",
+			ctx:       multi,
+			wantTitle: "Book Title",
+			wantGroup: "/lib/Author/Book Title",
+			wantIdx:   20001,
+		},
+		{
+			name:      "Disc subfolder with MP3 wrapper inside",
+			path:      "/lib/Author/Book Title/Disc 2/MP3/01.mp3",
+			ctx:       multi,
+			wantTitle: "Book Title",
+			wantGroup: "/lib/Author/Book Title",
+			wantIdx:   20001,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := parser.ParseWithContext(tc.path, sdk.ParseProbe{HasAudio: true, Tags: tc.tags}, tc.ctx)
+			if !ok {
+				t.Fatalf("ParseWithContext(%q) ok=false", tc.path)
+			}
+			if got.Title != tc.wantTitle || got.PartGroup != tc.wantGroup || got.Index != tc.wantIdx {
+				t.Fatalf("got %+v, want Title=%q PartGroup=%q Index=%d", got, tc.wantTitle, tc.wantGroup, tc.wantIdx)
+			}
+		})
 	}
 }

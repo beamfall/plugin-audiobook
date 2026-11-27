@@ -206,3 +206,109 @@ func TestHydrationVocabularyDeclared(t *testing.T) {
 		}
 	}
 }
+
+// TestMapHydrationHygieneGoldenTowerValues pins CORE-3485 against the exact
+// Tower library-audiobooks cases: HTML entity decoding before splitting, comma
+// splitting with Last, First preservation, role suffix extraction, placeholder
+// dropping, composer/narrator separation, and genre comma splitting + stopwords.
+func TestMapHydrationHygieneGoldenTowerValues(t *testing.T) {
+	cases := []struct {
+		name string
+		tags map[string]string
+		want []HydrationRelation
+	}{
+		{
+			name: "Waiting to be Heard HTML entity before split",
+			tags: map[string]string{
+				"album_artist": "&#169; 5 minutes",
+				"genre":        "Business &amp; Careers, Management &amp; Leadership",
+			},
+			want: []HydrationRelation{
+				person("© 5 minutes", RoleAuthor, 0),
+				genre("Business & Careers"),
+				genre("Management & Leadership"),
+			},
+		},
+		{
+			name: "comma-joined multi-person vs Last, First and Jr. suffix",
+			tags: map[string]string{
+				"album_artist": "Brian Christian, Tom Griffiths",
+				"narrator":     "Sanderson, Brandon; Martin Luther King, Jr.",
+			},
+			want: []HydrationRelation{
+				person("Brian Christian", RoleAuthor, 0),
+				person("Tom Griffiths", RoleAuthor, 1),
+				person("Sanderson, Brandon", RoleNarrator, 2),
+				person("Martin Luther King, Jr.", RoleNarrator, 3),
+			},
+		},
+		{
+			name: "role suffixes become roles and full cast is dropped",
+			tags: map[string]string{
+				"album_artist": "Jay Wiseman - foreword, Scott Brick (narrator), Jane Doe, narrator, full cast, N/A",
+			},
+			want: []HydrationRelation{
+				person("Jay Wiseman", "foreword", 0),
+				person("Scott Brick", RoleNarrator, 1),
+				person("Jane Doe", RoleNarrator, 2),
+			},
+		},
+		{
+			name: "comma placeholder dropped without trapping neighbor and composer non-author role preserved",
+			tags: map[string]string{
+				"album_artist": "Neil Gaiman (foreword); Terry Pratchett, Unknown",
+				"composer":     "Neil Gaiman",
+			},
+			want: []HydrationRelation{
+				person("Neil Gaiman", "narrator, foreword", 0),
+				person("Terry Pratchett", RoleAuthor, 1),
+			},
+		},
+		{
+			name: "Rich Dad Poor Dad and System Error: composer maps to narrator only when author differs",
+			tags: map[string]string{
+				"album_artist": "Robert T. Kiyosaki, Tim Wheeler",
+				"composer":     "Tim Wheeler",
+			},
+			want: []HydrationRelation{
+				person("Robert T. Kiyosaki", RoleAuthor, 0),
+				person("Tim Wheeler", RoleNarrator, 1),
+			},
+		},
+		{
+			name: "artist equals composer falls back to author tag when present",
+			tags: map[string]string{
+				"artist":   "Kaleo Griffith",
+				"author":   "Rob Reich, Mehran Sahami, Jeremy M. Weinstein",
+				"composer": "Kaleo Griffith",
+			},
+			want: []HydrationRelation{
+				person("Rob Reich", RoleAuthor, 0),
+				person("Mehran Sahami", RoleAuthor, 1),
+				person("Jeremy M. Weinstein", RoleAuthor, 2),
+				person("Kaleo Griffith", RoleNarrator, 3),
+			},
+		},
+		{
+			name: "genre stopwords dropped and comma-separated genres split",
+			tags: map[string]string{
+				"genre": "Audiobook, Audiobooks; Hörbuch / Other, Unknown, Business & Careers, Management & Leadership",
+			},
+			want: []HydrationRelation{
+				genre("Business & Careers"),
+				genre("Management & Leadership"),
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := MapHydration(tc.tags, flatPath)
+			if !reflect.DeepEqual(got.Relations, tc.want) {
+				t.Fatalf("MapHydration relations =\n  %+v\nwant\n  %+v", got.Relations, tc.want)
+			}
+			if got.Mapped != (len(tc.want) > 0) {
+				t.Fatalf("Mapped = %v, want %v", got.Mapped, len(tc.want) > 0)
+			}
+		})
+	}
+}

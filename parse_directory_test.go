@@ -179,6 +179,29 @@ func TestParseDirectoryPartialTagsAndAuthorNoiseLayouts(t *testing.T) {
 			wantGroup: "/lib/Author/SameTrackRip",
 			wantOrder: []string{"Part 1.mp3", "Part 2.mp3", "Part 10.mp3"},
 		},
+		{
+			name: "Mortality [Disc 1] and [Disc 2] album tags merge and order by disc then track",
+			dir:  "/mnt/user/audio/books/Mortality",
+			probes: map[string]sdk.ParseProbe{
+				"/mnt/user/audio/books/Mortality/b.mp3": {HasAudio: true, Tags: map[string]string{"album": "Mortality - Unabridged - [Disc 2]", "track": "1"}},
+				"/mnt/user/audio/books/Mortality/a.mp3": {HasAudio: true, Tags: map[string]string{"album": "Mortality - Unabridged - [Disc 1]", "track": "2"}},
+				"/mnt/user/audio/books/Mortality/c.mp3": {HasAudio: true, Tags: map[string]string{"album": "Mortality - Unabridged - [Disc 1]", "track": "1"}},
+			},
+			wantTitle: "Mortality",
+			wantGroup: "/mnt/user/audio/books/Mortality",
+			wantOrder: []string{"c.mp3", "a.mp3", "b.mp3"},
+		},
+		{
+			name: "wrapper Audiobook subfolder flattens to parent book folder",
+			dir:  "/mnt/user/audio/books/A Woman First/Audiobook",
+			probes: map[string]sdk.ParseProbe{
+				"/mnt/user/audio/books/A Woman First/Audiobook/02.mp3": {HasAudio: true},
+				"/mnt/user/audio/books/A Woman First/Audiobook/01.mp3": {HasAudio: true},
+			},
+			wantTitle: "A Woman First",
+			wantGroup: "/mnt/user/audio/books/A Woman First",
+			wantOrder: []string{"01.mp3", "02.mp3"},
+		},
 	}
 
 	for _, tt := range tests {

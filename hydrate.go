@@ -1,8 +1,10 @@
 package audiobook
 
 import (
+	"html"
 	"math"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -62,13 +64,68 @@ type Hydration struct {
 const maxSequenceSortValue = 1e6
 
 var (
-	// Multi-value separators for people and genres. Commas are not split: a
-	// "Last, First" name would be torn in two.
-	personSeparators = regexp.MustCompile(`\s*(?:;|/|\s&\s|\sand\s)\s*`)
-	genreSeparators  = regexp.MustCompile(`\s*[;/]\s*`)
-	reSequence       = regexp.MustCompile(`^(\d+)(?:\.(\d+))?$`)
-	reTotal          = regexp.MustCompile(`^\d+$`)
+	// Multi-value separators for genres.
+	genreSeparators      = regexp.MustCompile(`\s*[;/,]\s*`)
+	reSequence           = regexp.MustCompile(`^(\d+)(?:\.(\d+))?$`)
+	reTotal              = regexp.MustCompile(`^\d+$`)
+	reBracketedRole      = regexp.MustCompile(`^(.*?)\s*[\(\[]\s*([^\)\]]+?)\s*[\)\]]\s*$`)
+	reSeparatedRole      = regexp.MustCompile(`^(.*?)\s*(?:[-–—]+|,)\s*([A-Za-z][A-Za-z ]+)$`)
+	reLeadingRolePrefix  = regexp.MustCompile(`(?i)^(?:read\s+by|narrated\s+by|translated\s+by|edited\s+by|abridged\s+by)\s+(.+)$`)
+	reLeadingRoleKeyword = regexp.MustCompile(`(?i)^(read\s+by|narrated\s+by|translated\s+by|edited\s+by|abridged\s+by)\s+`)
 )
+
+var nonPersonPlaceholders = map[string]bool{
+	"full cast":          true,
+	"full cast audio":    true,
+	"cast":               true,
+	"various":            true,
+	"various authors":    true,
+	"various narrators":  true,
+	"multiple narrators": true,
+	"unknown":            true,
+	"unknown author":     true,
+	"unknown artist":     true,
+	"uncredited":         true,
+	"n/a":                true,
+	"none":               true,
+}
+
+var genreStopwords = map[string]bool{
+	"audiobook":  true,
+	"audiobooks": true,
+	"hörbuch":    true,
+	"other":      true,
+	"unknown":    true,
+}
+
+var commaJoinSuffixes = map[string]bool{
+	"jr": true, "jr.": true, "sr": true, "sr.": true,
+	"ii": true, "iii": true, "iv": true,
+	"phd": true, "ph.d.": true, "md": true, "m.d.": true,
+	"esq": true, "esq.": true,
+}
+
+var roleKeywords = map[string]string{
+	"author":        RoleAuthor,
+	"narrator":      RoleNarrator,
+	"reader":        RoleNarrator,
+	"read by":       RoleNarrator,
+	"narrated by":   RoleNarrator,
+	"translator":    RoleTranslator,
+	"translated by": RoleTranslator,
+	"foreword":      "foreword",
+	"introduction":  "introduction",
+	"intro":         "introduction",
+	"afterword":     "afterword",
+	"preface":       "preface",
+	"editor":        "editor",
+	"edited by":     "editor",
+	"illustrator":   "illustrator",
+	"contributor":   "contributor",
+	"commentary":    "commentary",
+	"abridged by":   "abridged",
+	"adapter":       "adapter",
+}
 
 // MapHydration maps one audiobook file's embedded tags (keys matched
 // case-insensitively) and its path to Person credits, Series membership and
@@ -95,7 +152,7 @@ func MapHydration(tags map[string]string, path string) Hydration {
 	if series, ok := seriesRelation(lookup, path); ok {
 		relations = append(relations, series)
 	}
-	for _, genre := range splitValues(firstTag(lookup, "genre"), genreSeparators) {
+	for _, genre := range splitGenres(firstTag(lookup, "genre")) {
 		relations = append(relations, HydrationRelation{
 			From: HydrationEntity{Kind: KindGenre, Title: genre},
 			Name: RelationGenreOf,
@@ -136,18 +193,19 @@ func firstTag(tags map[string]string, keys ...string) string {
 	return ""
 }
 
-// splitValues splits a multi-value tag, collapses whitespace, drops empties
-// and removes case-insensitive duplicates, keeping first appearance.
-func splitValues(raw string, separators *regexp.Regexp) []string {
+// splitGenres decodes HTML entities, splits on ";", "/", and ",", collapses
+// whitespace, drops stopwords/empties and deduplicates case-insensitively.
+func splitGenres(raw string) []string {
 	if raw == "" {
 		return nil
 	}
+	decoded := html.UnescapeString(raw)
 	var values []string
 	seen := map[string]bool{}
-	for _, part := range separators.Split(raw, -1) {
+	for _, part := range genreSeparators.Split(decoded, -1) {
 		value := strings.Join(strings.Fields(part), " ")
 		key := foldKey(value)
-		if value == "" || seen[key] {
+		if value == "" || genreStopwords[strings.ToLower(value)] || seen[key] {
 			continue
 		}
 		seen[key] = true
@@ -156,36 +214,186 @@ func splitValues(raw string, separators *regexp.Regexp) []string {
 	return values
 }
 
+type personEntry struct {
+	name string
+	role string
+}
+
+var personNonSlashSeparators = regexp.MustCompile(`\s*(?:;|\s&\s|\sand\s)\s*`)
+
+func parsePeople(raw, defaultRole string) []personEntry {
+	if raw == "" {
+		return nil
+	}
+	decoded := strings.Join(strings.Fields(html.UnescapeString(raw)), " ")
+	if decoded == "" || nonPersonPlaceholders[strings.ToLower(decoded)] {
+		return nil
+	}
+	var entries []personEntry
+	for _, chunk := range personNonSlashSeparators.Split(decoded, -1) {
+		for _, commaPart := range splitPersonCommas(chunk) {
+			trimmed := strings.Join(strings.Fields(commaPart), " ")
+			if trimmed == "" || nonPersonPlaceholders[strings.ToLower(trimmed)] {
+				continue
+			}
+			for _, candidate := range strings.Split(trimmed, "/") {
+				name, role := cleanPersonRole(candidate, defaultRole)
+				if name == "" || nonPersonPlaceholders[strings.ToLower(name)] {
+					continue
+				}
+				entries = append(entries, personEntry{name: name, role: role})
+			}
+		}
+	}
+	return entries
+}
+
+func splitPersonCommas(chunk string) []string {
+	rawParts := strings.Split(chunk, ",")
+	parts := make([]string, 0, len(rawParts))
+	for _, part := range rawParts {
+		cleaned := strings.Join(strings.Fields(part), " ")
+		if cleaned == "" {
+			continue
+		}
+		if len(parts) > 0 {
+			lower := strings.ToLower(cleaned)
+			if _, isRole := roleKeywords[lower]; isRole || commaJoinSuffixes[lower] {
+				parts[len(parts)-1] = parts[len(parts)-1] + ", " + cleaned
+				continue
+			}
+		}
+		parts = append(parts, cleaned)
+	}
+	if len(parts) == 2 && !nonPersonPlaceholders[strings.ToLower(parts[0])] && !nonPersonPlaceholders[strings.ToLower(parts[1])] {
+		if len(strings.Fields(parts[0])) == 1 || len(strings.Fields(parts[1])) == 1 {
+			return []string{parts[0] + ", " + parts[1]}
+		}
+	}
+	return parts
+}
+
+func cleanPersonRole(raw, defaultRole string) (string, string) {
+	name := strings.Join(strings.Fields(raw), " ")
+	role := defaultRole
+	if m := reLeadingRoleKeyword.FindStringSubmatch(name); m != nil {
+		if mapped, ok := roleKeywords[strings.ToLower(strings.Join(strings.Fields(m[1]), " "))]; ok {
+			role = mapped
+			if rest := reLeadingRolePrefix.FindStringSubmatch(name); rest != nil {
+				name = strings.TrimSpace(rest[1])
+			}
+		}
+	}
+	for {
+		if m := reBracketedRole.FindStringSubmatch(name); m != nil {
+			if mapped, ok := roleKeywords[strings.ToLower(strings.Join(strings.Fields(m[2]), " "))]; ok {
+				role = mapped
+				name = strings.TrimSpace(m[1])
+				continue
+			}
+		}
+		if m := reSeparatedRole.FindStringSubmatch(name); m != nil {
+			if mapped, ok := roleKeywords[strings.ToLower(strings.Join(strings.Fields(m[2]), " "))]; ok {
+				role = mapped
+				name = strings.TrimSpace(m[1])
+				continue
+			}
+		}
+		break
+	}
+	name = strings.Join(strings.Fields(name), " ")
+	if _, isRoleOnly := roleKeywords[strings.ToLower(name)]; isRoleOnly {
+		return "", role
+	}
+	return name, role
+}
+
+func personKeySet(entries []personEntry) map[string]bool {
+	set := make(map[string]bool, len(entries))
+	for _, e := range entries {
+		set[foldKey(e.name)] = true
+	}
+	return set
+}
+
+func allPeopleInSet(entries []personEntry, set map[string]bool) bool {
+	if len(entries) == 0 {
+		return false
+	}
+	for _, e := range entries {
+		if !set[foldKey(e.name)] {
+			return false
+		}
+	}
+	return true
+}
+
+func hasPersonOutsideSet(entries []personEntry, set map[string]bool) bool {
+	for _, e := range entries {
+		if !set[foldKey(e.name)] {
+			return true
+		}
+	}
+	return false
+}
+
 type credit struct {
 	name  string
 	roles []string
 }
 
 func credits(tags map[string]string) []HydrationRelation {
-	sources := []struct {
-		role string
-		raw  string
-	}{
-		{RoleAuthor, firstTag(tags, "album_artist", "artist", "author")},
-		{RoleNarrator, firstTag(tags, "narrator", "composer")},
-		{RoleTranslator, firstTag(tags, "translator")},
+	composerEntries := parsePeople(tags["composer"], RoleNarrator)
+	composerKeys := personKeySet(composerEntries)
+
+	authorEntries := parsePeople(tags["album_artist"], RoleAuthor)
+	if len(authorEntries) == 0 {
+		artistEntries := parsePeople(tags["artist"], RoleAuthor)
+		tagAuthorEntries := parsePeople(tags["author"], RoleAuthor)
+		if len(artistEntries) > 0 && len(tagAuthorEntries) > 0 && allPeopleInSet(artistEntries, composerKeys) {
+			authorEntries = tagAuthorEntries
+		} else if len(artistEntries) > 0 {
+			authorEntries = artistEntries
+		} else {
+			authorEntries = tagAuthorEntries
+		}
 	}
+	if len(composerKeys) > 0 && hasPersonOutsideSet(authorEntries, composerKeys) {
+		filtered := authorEntries[:0]
+		for _, entry := range authorEntries {
+			if entry.role == RoleAuthor && composerKeys[foldKey(entry.name)] {
+				continue
+			}
+			filtered = append(filtered, entry)
+		}
+		authorEntries = filtered
+	}
+
+	narratorEntries := parsePeople(tags["narrator"], RoleNarrator)
+	if len(narratorEntries) == 0 {
+		narratorEntries = composerEntries
+	}
+	translatorEntries := parsePeople(tags["translator"], RoleTranslator)
+
 	var people []*credit
 	byName := map[string]*credit{}
-	for _, source := range sources {
-		for _, name := range splitValues(source.raw, personSeparators) {
-			key := foldKey(name)
+	for _, list := range [][]personEntry{authorEntries, narratorEntries, translatorEntries} {
+		for _, entry := range list {
+			key := foldKey(entry.name)
 			person := byName[key]
 			if person == nil {
-				person = &credit{name: name}
+				person = &credit{name: entry.name}
 				byName[key] = person
 				people = append(people, person)
 			}
-			person.roles = append(person.roles, source.role)
+			if !slices.Contains(person.roles, entry.role) {
+				person.roles = append(person.roles, entry.role)
+			}
 		}
 	}
 	relations := make([]HydrationRelation, 0, len(people))
 	for i, person := range people {
+		sortRoles(person.roles)
 		relations = append(relations, HydrationRelation{
 			From:       HydrationEntity{Kind: KindPerson, Title: person.name},
 			Name:       RelationCreditedOn,
@@ -196,9 +404,27 @@ func credits(tags map[string]string) []HydrationRelation {
 	return relations
 }
 
+func sortRoles(roles []string) {
+	rank := func(role string) int {
+		switch role {
+		case RoleAuthor:
+			return 0
+		case RoleNarrator:
+			return 1
+		case RoleTranslator:
+			return 2
+		default:
+			return 3
+		}
+	}
+	slices.SortStableFunc(roles, func(a, b string) int {
+		return rank(a) - rank(b)
+	})
+}
+
 func seriesRelation(tags map[string]string, path string) (HydrationRelation, bool) {
 	folderName, folderSequence := seriesFromFolder(path)
-	name := firstNonEmpty(firstTag(tags, "series", "mvnm", "grouping"), folderName)
+	name := html.UnescapeString(firstNonEmpty(firstTag(tags, "series", "mvnm", "grouping"), folderName))
 	if name == "" {
 		return HydrationRelation{}, false
 	}

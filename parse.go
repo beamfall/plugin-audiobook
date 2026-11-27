@@ -83,7 +83,10 @@ var (
 	reKeywordOrdinalOnly  = regexp.MustCompile(`(?i)^(track|chapter|part|disc|disk|cd|ch|pt)[ ._-]*0*(\d{1,4})$`)
 	reDigitsOnly          = regexp.MustCompile(`^0*(\d{1,4})$`)
 	reNoiseSuffix         = regexp.MustCompile(`(?i)(?:\s*[\(\[\{][^)\]\}]*\b(?:unabridged|abridged|audiobook|mp3|m4b|m4a|aac|flac|ogg|opus|wma|cbr|vbr|retail|(?:\d+\s*)?kbps|read\s+by\b[^)\]\}]*|narrated\s+by\b[^)\]\}]*)[\)\]\}]|\s*[-–—]\s*(?:unabridged|abridged|audiobook|retail)\b)\s*$`)
-	reDiscSuffix          = regexp.MustCompile(`(?i)(?:\s*[\(\[\{]\s*(?:disc|disk|cd|tape)\s*\d{1,3}\s*[\)\]\}]|\s*[,\-–—]\s*(?:disc|disk|cd|tape)\s*\d{1,3})\s*$`)
+	reBracketedDisc       = regexp.MustCompile(`(?i)(?:\s*[,\-–—]\s*|\s*)[\(\[\{]\s*(?:disc|disk|cd|tape)[ ._-]*0*([1-9]\d{0,2})\s*[\)\]\}]`)
+	reTrailingDisc        = regexp.MustCompile(`(?i)(?:^|\s*[,\-–—]\s*|\s+)(?:disc|disk|cd|tape)[ ._-]*0*([1-9]\d{0,2})\s*$`)
+	reInlineDisc          = regexp.MustCompile(`(?i)(?:^|[ ._/-]+)(?:disc|disk|cd|tape)[ ._-]*0*([1-9]\d{0,2})(?:$|[ ._/-]+)`)
+	reLeadingDiscOnly     = regexp.MustCompile(`(?i)^(?:disc|disk|cd|tape)[ ._-]*0*[1-9]\d{0,2}(?:\b|_)`)
 	reTrailingStemPart    = regexp.MustCompile(`(?i)(?:(?:\s*[-–—]\s*|\s+)(?:part|chapter|disc|disk|cd|pt|ch)[ ._-]*\d{1,4}|\s*[-–—]\s*\d{1,3})\s*$`)
 	// A series-position folder segment: "Series Name 03", "Series Name #4",
 	// "Series Name Book 2", "Series Name BOOK 2", "Series Name 4.5". Captures
@@ -135,11 +138,10 @@ func (p *Parser) Parse(path string, probe sdk.ParseProbe) (sdk.ParsedMedia, bool
 	leafFolder := filepath.Base(dir)
 
 	tags := probe.Tags // lowercased keys (scan lowercases them)
-	dt := discTag(tags)
-	effDisc := disc
-	if effDisc == 0 {
-		effDisc = dt
-	}
+	rawAlbum := strings.TrimSpace(tagValue(tags, "album"))
+	effDisc := effectiveDisc(disc, stem, tags)
+	_, fnDiscOrd, hasFnDisc := parseFilenameDiscTrack(stem)
+	stemClean, _ := stripAndExtractDisc(stem)
 	author := tagValue(tags, "album_artist", "artist")
 
 	_, parsed.Sequence = seriesFromFolder(path)
@@ -152,8 +154,8 @@ func (p *Parser) Parse(path string, probe sdk.ParseProbe) (sdk.ParsedMedia, bool
 	// of a single-file disc must still agree with multi-file disc folders.
 	if disc > 0 {
 		parsed.Title = cleanBookFolderTitle(leafFolder, "", bookParentFolder(dir, parsed.Sequence))
-	} else {
-		parsed.Title = strings.TrimSpace(tagValue(tags, "album"))
+	} else if rawAlbum != "" {
+		parsed.Title = cleanAlbumTitle(rawAlbum, author, bookParentFolder(dir, parsed.Sequence))
 	}
 	if parsed.Title == "" {
 		// No album tag: the leaf folder usually names the book (the
@@ -165,7 +167,11 @@ func (p *Parser) Parse(path string, probe sdk.ParseProbe) (sdk.ParsedMedia, bool
 		// author and the title lives in the filename.
 		folder := cleanBookFolderTitle(leafFolder, author, bookParentFolder(dir, parsed.Sequence))
 		if folder == "" || folderIsAuthor(folder, tags) {
-			parsed.Title = firstNonEmpty(cleanName(stripLeadingOrdinal(stem)), folder)
+			stemTitle := strings.TrimSpace(reTrailingStemPart.ReplaceAllString(stemClean, ""))
+			if stemTitle == "" {
+				stemTitle = stemClean
+			}
+			parsed.Title = firstNonEmpty(cleanName(stripLeadingOrdinal(stemTitle)), folder)
 		} else {
 			parsed.Title = folder
 		}
@@ -184,7 +190,11 @@ func (p *Parser) Parse(path string, probe sdk.ParseProbe) (sdk.ParsedMedia, bool
 			parsed.PartGroup = filepath.Clean(dir)
 		}
 	}
-	if parsed.PartGroup == "" {
+	if parsed.PartGroup == "" && hasFnDisc && validTrack(fnDiscOrd, effDisc) {
+		parsed.Index = fnDiscOrd
+		parsed.PartGroup = filepath.Clean(dir)
+	}
+	if parsed.PartGroup == "" && !reLeadingDiscOnly.MatchString(stem) {
 		if m := reLeadingOrdinal.FindStringSubmatch(stem); m != nil {
 			if n := atoi(m[1]); validTrack(n, effDisc) {
 				parsed.Index = n
@@ -192,15 +202,23 @@ func (p *Parser) Parse(path string, probe sdk.ParseProbe) (sdk.ParsedMedia, bool
 			}
 		}
 	}
-	// A disc subfolder or disc tag qualifies the ordinal so every disc's parts
-	// join one book in disc-then-track order. The disc number alone orders a
-	// disc folder that holds a single file. A per-disc track total does not
-	// bound the qualified Index, so it is dropped.
+	if parsed.PartGroup == "" {
+		if m := reTrailingPartOrdinal.FindStringSubmatch(stem); m != nil {
+			if n := atoi(m[1]); validTrack(n, effDisc) {
+				parsed.Index = n
+				parsed.PartGroup = filepath.Clean(dir)
+			}
+		}
+	}
+	// A disc subfolder, disc tag, or disc marker in album/filename qualifies the
+	// ordinal so every disc's parts join one book in disc-then-track order. The
+	// disc number alone orders a disc folder or single-file disc. A per-disc
+	// track total does not bound the qualified Index, so it is dropped.
 	if effDisc > 0 && parsed.PartGroup != "" {
 		parsed.Index = effDisc*discStride + parsed.Index
 		parsed.IndexEnd = 0
-	} else if disc > 0 {
-		parsed.Index = disc * discStride
+	} else if effDisc > 0 {
+		parsed.Index = effDisc * discStride
 		parsed.IndexEnd = 0
 		parsed.PartGroup = filepath.Clean(dir)
 	}
@@ -268,10 +286,9 @@ func multiFileRefusal(path string, probe sdk.ParseProbe, parsed sdk.ParsedMedia)
 		track, _ := trackNumber(rawTrack)
 		ordinal, err := strconv.Atoi(track)
 		_, disc := bookDir(filepath.Dir(path))
-		effDisc := disc
-		if effDisc == 0 {
-			effDisc = discTag(probe.Tags)
-		}
+		base := filepath.Base(path)
+		stem := strings.TrimSuffix(base, filepath.Ext(base))
+		effDisc := effectiveDisc(disc, stem, probe.Tags)
 		if rawTrack != "" && (err != nil || !validTrack(ordinal, effDisc)) {
 			if album == "" {
 				return RefusalTaggedWithoutBook
@@ -337,17 +354,17 @@ func (p *Parser) ParseDirectory(dir string, probes map[string]sdk.ParseProbe, ha
 		if rawAlbum == "" {
 			continue
 		}
+		cleaned := cleanAlbumTitle(rawAlbum, dirAuthor, parentFolder)
+		if cleaned == "" {
+			continue
+		}
 		key := albumComparisonKey(rawAlbum, dirAuthor, parentFolder)
 		if key == "" {
-			key = strings.ToLower(rawAlbum)
+			key = strings.ToLower(cleaned)
 		}
 		if _, exists := albumTitles[key]; !exists {
 			if firstAlbumKey == "" {
 				firstAlbumKey = key
-			}
-			cleaned := cleanAlbumTitle(rawAlbum, dirAuthor, parentFolder)
-			if cleaned == "" {
-				cleaned = rawAlbum
 			}
 			albumTitles[key] = cleaned
 		}
@@ -393,10 +410,18 @@ func (p *Parser) ParseDirectory(dir string, probes map[string]sdk.ParseProbe, ha
 		stem := strings.TrimSuffix(base, filepath.Ext(base))
 		tags := probes[path].Tags
 		dt := discTag(tags)
+		_, albumDisc := cleanAlbumAndDisc(tagValue(tags, "album"), "", "")
 		fnDisc, fnDiscOrd, hasFnDisc := parseFilenameDiscTrack(stem)
+		_, stemDisc := stripAndExtractDisc(stem)
 		effDisc := dt
+		if effDisc == 0 {
+			effDisc = albumDisc
+		}
 		if effDisc == 0 && discDir == 0 && hasFnDisc {
 			effDisc = fnDisc
+		}
+		if effDisc == 0 && discDir == 0 {
+			effDisc = stemDisc
 		}
 		if effDisc > 0 && discDir == 0 {
 			distinctDiscs[effDisc] = struct{}{}
@@ -556,22 +581,55 @@ func (p *Parser) ParseMediaFields(_ string, probe sdk.ParseProbe) []sdk.ParsedTe
 	return []sdk.ParsedTextField{{Name: "narrator", Text: narrator}}
 }
 
+var wrapperFolders = map[string]bool{
+	"audiobook": true,
+	"audio":     true,
+	"mp3":       true,
+	"m4b":       true,
+}
+
 // bookDir returns the folder that names the book for a file in dir, and the
 // disc number when dir is a disc subfolder ("Author/Title/Disc 2/") whose
-// parent is a real folder: the parent is then the book folder. Otherwise it
-// returns dir and 0. A disc folder directly under the library root cannot be
-// told apart from one under a book folder, so it takes the root's name.
+// parent is a real folder: the parent is then the book folder. Wrapper
+// subfolders ("Audiobook", "Audio", "MP3", "M4B", or a child folder whose
+// cleaned title matches the parent folder's cleaned title) are also flattened
+// onto the parent book folder.
 func bookDir(dir string) (string, int) {
-	m := reDiscFolder.FindStringSubmatch(filepath.Base(dir))
-	if m == nil {
-		return dir, 0
+	disc := 0
+	peelDisc := func(d string) (string, int) {
+		if m := reDiscFolder.FindStringSubmatch(filepath.Base(d)); m != nil {
+			n := atoi(m[1])
+			p := filepath.Dir(d)
+			if n > 0 && cleanName(filepath.Base(p)) != "" {
+				return p, n
+			}
+		}
+		return d, 0
 	}
-	disc := atoi(m[1])
+	if next, d := peelDisc(dir); d > 0 {
+		dir, disc = next, d
+	}
+	base := filepath.Base(dir)
 	parent := filepath.Dir(dir)
-	if disc <= 0 || cleanName(filepath.Base(parent)) == "" {
-		return dir, 0
+	parentBase := filepath.Base(parent)
+	if cleanName(parentBase) != "" {
+		flattens := wrapperFolders[strings.ToLower(strings.TrimSpace(base))]
+		if !flattens {
+			childClean := cleanBookFolderTitle(base, "", "")
+			grandparent := filepath.Base(filepath.Dir(parent))
+			parentClean := cleanBookFolderTitle(parentBase, "", grandparent)
+			flattens = childClean != "" && parentClean != "" && strings.EqualFold(childClean, parentClean)
+		}
+		if flattens {
+			dir = parent
+			if disc == 0 {
+				if next, d := peelDisc(dir); d > 0 {
+					dir, disc = next, d
+				}
+			}
+		}
 	}
-	return parent, disc
+	return dir, disc
 }
 
 // validTrack reports whether n is a usable part ordinal from a track tag: it
@@ -699,6 +757,25 @@ func discTag(tags map[string]string) int {
 	return n
 }
 
+func effectiveDisc(dirDisc int, stem string, tags map[string]string) int {
+	if dirDisc > 0 {
+		return dirDisc
+	}
+	if dt := discTag(tags); dt > 0 {
+		return dt
+	}
+	if _, albumDisc := cleanAlbumAndDisc(tagValue(tags, "album"), "", ""); albumDisc > 0 {
+		return albumDisc
+	}
+	if fnDisc, _, ok := parseFilenameDiscTrack(stem); ok && fnDisc > 0 {
+		return fnDisc
+	}
+	if _, stemDisc := stripAndExtractDisc(stem); stemDisc > 0 {
+		return stemDisc
+	}
+	return 0
+}
+
 func stripNoiseSuffixes(s string) string {
 	for {
 		loc := reNoiseSuffix.FindStringIndex(s)
@@ -713,17 +790,36 @@ func stripNoiseSuffixes(s string) string {
 	}
 }
 
-func stripDiscSuffixes(s string) string {
+func stripAndExtractDisc(s string) (string, int) {
+	disc := 0
+	cur := strings.TrimSpace(s)
 	for {
-		loc := reDiscSuffix.FindStringIndex(s)
-		if loc == nil {
-			return strings.TrimSpace(s)
+		changed := false
+		if loc := reBracketedDisc.FindStringSubmatchIndex(cur); loc != nil {
+			if disc == 0 {
+				disc = atoi(cur[loc[2]:loc[3]])
+			}
+			cur = strings.Join(strings.Fields(cur[:loc[0]]+" "+cur[loc[1]:]), " ")
+			cur = strings.TrimRight(cur, " ,-–—")
+			cur = strings.TrimSpace(cur)
+			changed = true
+		} else if loc := reTrailingDisc.FindStringSubmatchIndex(cur); loc != nil {
+			if disc == 0 {
+				disc = atoi(cur[loc[2]:loc[3]])
+			}
+			cur = strings.TrimSpace(cur[:loc[0]])
+			changed = true
+		} else if loc := reInlineDisc.FindStringSubmatchIndex(cur); loc != nil {
+			if disc == 0 {
+				disc = atoi(cur[loc[2]:loc[3]])
+			}
+			cur = strings.Join(strings.Fields(cur[:loc[0]]+" "+cur[loc[1]:]), " ")
+			cur = strings.Trim(cur, " ,-–—")
+			changed = true
 		}
-		trimmed := strings.TrimSpace(s[:loc[0]])
-		if trimmed == "" {
-			return strings.TrimSpace(s)
+		if !changed {
+			return cur, disc
 		}
-		s = trimmed
 	}
 }
 
@@ -775,15 +871,33 @@ func cleanBookFolderTitle(raw, author, parent string) string {
 }
 
 func cleanAlbumTitle(raw, author, parent string) string {
+	cleaned, _ := cleanAlbumAndDisc(raw, author, parent)
+	return cleaned
+}
+
+func cleanAlbumAndDisc(raw, author, parent string) (string, int) {
 	s := strings.TrimSpace(raw)
 	if s == "" {
-		return ""
+		return "", 0
 	}
-	s = stripNoiseSuffixes(s)
-	s = stripDiscSuffixes(s)
+	disc := 0
+	stripStep := func(in string) string {
+		for {
+			s1 := stripNoiseSuffixes(in)
+			s2, d := stripAndExtractDisc(s1)
+			if disc == 0 && d > 0 {
+				disc = d
+			}
+			if s2 == in {
+				return s2
+			}
+			in = s2
+		}
+	}
+	s = stripStep(s)
 	s = stripAuthorPrefix(s, author, parent)
-	s = stripNoiseSuffixes(s)
-	return strings.TrimSpace(s)
+	s = stripStep(s)
+	return strings.TrimSpace(s), disc
 }
 
 func albumComparisonKey(raw, author, parent string) string {
